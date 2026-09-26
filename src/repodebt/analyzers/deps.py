@@ -199,8 +199,33 @@ _REQUIREMENT_RE = re.compile(
 )
 
 
-def parse_requirements(text: str, path: str, group: str = PROD) -> Manifest:
+#: Filename fragments that mark a requirements file as holding test/tooling
+#: dependencies rather than things the project ships. Without this, a
+#: ``requirements-dev.txt`` listing pytest and coverage is reported as a
+#: production dependency manifest: the counts overstate what is deployed, and
+#: an online advisory lookup would query packages the release never installs.
+_DEV_REQ_PARTS = ("dev", "devel", "test", "testing", "contrib")
+
+
+def _requirements_group(path: str) -> str:
+    """Classify a requirements file by name as production or development."""
+    name = re.split(r"[/\\]", path.rsplit("/", 1)[-1])[-1].lower()
+    # requirements/dev.txt and requirements/test.txt put the marker in the
+    # directory rather than the filename, so look at both components.
+    parts = re.split(r"[/\\]", path.lower())
+    for part in parts[1:]:
+        if any(marker in part for marker in _DEV_REQ_PARTS):
+            return DEV
+    stem = name[: -len(".txt")] if name.endswith(".txt") else name
+    if any(marker in stem for marker in _DEV_REQ_PARTS):
+        return DEV
+    return PROD
+
+
+def parse_requirements(text: str, path: str, group: str | None = None) -> Manifest:
     manifest = Manifest(path=path, ecosystem="python")
+    if group is None:
+        group = _requirements_group(path)
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#") or line.startswith("-"):
@@ -593,6 +618,8 @@ def parse_manifest(info: FileInfo) -> Manifest | None:
     for prefix, fallback in PREFIX_PARSERS.items():
         if name.startswith(prefix) and name.endswith((".txt", ".in")):
             try:
+                if fallback is parse_requirements:
+                    return fallback(text, info.rel, _requirements_group(info.rel))
                 return fallback(text, info.rel)
             except Exception as exc:  # noqa: BLE001
                 manifest = Manifest(path=info.rel, ecosystem="python")

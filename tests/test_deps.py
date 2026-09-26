@@ -173,6 +173,41 @@ class RequirementsTest(unittest.TestCase):
         self.assertTrue(by_name["uvicorn"].pinned_exact)
         self.assertFalse(by_name["flask"].pinned_exact)
 
+    def test_plain_requirements_file_is_production(self):
+        manifest = dp.parse_requirements("flask==2.0.0\n", "requirements.txt")
+        self.assertEqual([d.group for d in manifest.dependencies], [dp.PROD])
+
+    def test_dev_flavoured_filenames_are_not_counted_as_production(self):
+        """Test and tooling pins must not be reported as shipped dependencies.
+
+        Otherwise the production dependency count overstates what a release
+        installs, and an online advisory lookup queries packages the project
+        never ships.
+        """
+        dev_names = [
+            "requirements-dev.txt",
+            "requirements_dev.txt",
+            "dev-requirements.txt",
+            "requirements-test.txt",
+            "requirements/tests.txt",
+            "requirements/dev.txt",
+            "requirements/testing.txt",
+        ]
+        for path in dev_names:
+            with self.subTest(path=path):
+                manifest = dp.parse_requirements("pytest==7.4.4\n", path)
+                self.assertEqual([d.group for d in manifest.dependencies], [dp.DEV], path)
+
+    def test_unmarked_requirements_files_stay_production(self):
+        for path in ("requirements.txt", "requirements/base.txt", "requirements-prod.txt"):
+            with self.subTest(path=path):
+                manifest = dp.parse_requirements("flask==2.0.0\n", path)
+                self.assertEqual([d.group for d in manifest.dependencies], [dp.PROD], path)
+
+    def test_explicit_group_argument_still_wins(self):
+        manifest = dp.parse_requirements("flask==2.0.0\n", "requirements-dev.txt", dp.PROD)
+        self.assertEqual([d.group for d in manifest.dependencies], [dp.PROD])
+
 
 @dataclass
 class FakeDep:

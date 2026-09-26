@@ -16,6 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from repodebt import config as cfg  # noqa: E402
+from repodebt.gitlog import GitRepo  # noqa: E402
 from repodebt.model import Dimension  # noqa: E402
 
 from fixtures import RepoCase, TempDirCase, branchy_function, git, python_file  # noqa: E402
@@ -44,8 +45,11 @@ class HotspotTest(RepoCase):
             self.commit(f"fix: minor {index}", {"core.py": python_file(1) + f"\nV{index} = 1\n"},
                         days_ago=index)
         report = self.audit()
-        self.assertEqual(report.metrics["hotspots"]["hotspots"], [])
         self.assertNotIn("hotspots.high_churn_complex", self.rule_ids(report))
+        # Too little history to rank churn is "not measured", not "measured and
+        # clean": the dimension must be left unscored rather than awarded 100.
+        self.assertIsNone(report.scorecard.get(Dimension.HOTSPOTS).score)
+        self.assertIn("hotspots_analysis", report.unavailable)
 
     def test_unchurned_file_outranks_churned_simple_file(self):
         self.init_repo()
@@ -97,6 +101,26 @@ class HotspotTest(RepoCase):
         self.assertIn("hotspots_analysis", report.unavailable)
         self.assertIn("30", report.unavailable["hotspots_analysis"])
         self.assertIsNone(report.scorecard.get(Dimension.HOTSPOTS).score)
+
+    def test_history_spread_too_thin_to_rank_is_unavailable_not_healthy(self):
+        """Enough commits for the window, but no single file is a hotspot.
+
+        This is the case ``available()`` cannot catch on its own: the window
+        holds MIN_COMMITS or more commits, yet they are spread across distinct
+        files so nothing clears the per-file threshold. The ranking never
+        happened, so the dimension must not be reported as perfectly clean.
+        """
+        self.init_repo()
+        for index in range(4):  # the window is fine, the churn is not
+            self.commit(f"feat: touch {index}",
+                        {f"mod{index}.py": python_file(1) + f"\nV{index} = 1\n"},
+                        days_ago=index)
+        report = self.audit()
+        self.assertNotIn("hotspots.high_churn_complex", self.rule_ids(report))
+        self.assertIn("hotspot_ranking", report.unavailable)
+        self.assertIsNone(report.scorecard.get(Dimension.HOTSPOTS).score)
+        # An unscored dimension is dropped from the average, not scored as 0.
+        self.assertIsNotNone(report.scorecard.overall)
 
     def test_non_python_source_is_ranked_but_marked_less_certain(self):
         self.init_repo()
@@ -153,10 +177,13 @@ class OwnershipTest(RepoCase):
 
     def test_wide_ownership_clears_the_bus_factor_rule(self):
         self.init_repo()
-        extra = ("Alan Turing", "alan@example.com"), ("Katherine Johnson", "kj@example.com")
-        for name, email in extra:
-            git(self.tmp, "config", f"user.name.{email}", name)
-        team = self.authors + extra
+        # self.authors already supplies three distinct people, so a single
+        # extra author is enough to make an even four-way split.
+        katherine = ("Katherine Johnson", "kj@example.com")
+        git(self.tmp, "config", f"user.name.{katherine[1]}", katherine[0])
+        team = tuple(self.authors) + (katherine,)
+        self.assertEqual(len({email for _, email in team}), len(team),
+                         "bus-factor fixtures need distinct author emails")
         for index in range(8):
             self.commit(f"feat: shared {index}",
                         {"a.py": python_file(1, lines_per_func=index + 1)},
@@ -373,6 +400,69 @@ class CommitConventionTest(RepoCase):
                         days_ago=index)
         report = self.audit()
         self.assertEqual(report.metrics["hygiene"]["conventional_commit_ratio"], 100.0)
+
+
+class MultiFileCommitTest(RepoCase):
+    """Every file in a commit must be attributed, not just the first one.
+
+    ``git log --numstat -z`` does not put one commit in one field. It merges
+    the header with the first numstat line and emits each further changed file
+    as its own headerless record. A parser that assumes otherwise silently
+    drops every file after the first, which quietly undercounts churn, commit
+    frequency and author spread -- and almost every real commit touches more
+    than one file.
+    """
+
+    def test_all_files_in_one_commit_are_recorded(self):
+        self.init_repo()
+        names = ["a.py", "b.py", "c.py", "d.py"]
+        self.commit("feat: add four modules",
+                    {name: python_file(1) for name in names}, days_ago=1)
+        history = GitRepo(self.tmp).history(180)
+        self.assertEqual(len(history.commits), 1)
+        recorded = {path for path, entry in history.files.items() if entry.commits}
+        for name in names:
+            self.assertIn(name, recorded, f"{name} was dropped from its own commit")
+
+    def test_churn_counts_every_line_of_a_multi_file_commit(self):
+        self.init_repo()
+        body = python_file(1, lines_per_func=8)
+        expected = len(body.splitlines()) * 4
+        self.commit("feat: bulk", {f"m{index}.py": body for index in range(4)}, days_ago=1)
+        history = GitRepo(self.tmp).history(180)
+        total = sum(entry.churn for entry in history.files.values())
+        self.assertEqual(total, expected,
+                         f"expected {expected} changed lines, counted {total}")
+
+    def test_a_files_authors_include_everyone_who_touched_it(self):
+        self.init_repo()
+        # Two commits by different people, each touching two files. If only the
+        # first file of each commit survives, neither file looks shared.
+        self.commit("feat: first half", {"a.py": python_file(1), "b.py": python_file(1)},
+                    author=self.authors[0], days_ago=2)
+        self.commit("feat: second half",
+                    {"a.py": python_file(2), "b.py": python_file(2)},
+                    author=self.authors[1], days_ago=1)
+        history = GitRepo(self.tmp).history(180)
+        for name in ("a.py", "b.py"):
+            entry = history.files[name]
+            self.assertEqual(entry.commits, 2, f"{name} commit count")
+            self.assertEqual(len(entry.authors), 2, f"{name} author spread")
+
+    def test_multi_file_commit_still_drives_hotspot_ranking(self):
+        self.init_repo()
+        # The busy file is never the alphabetically-first one in its commit, so
+        # a first-file-only parser drops it entirely and ranks the idle one.
+        for index in range(4):
+            self.commit(f"feat: churn {index}", {
+                "aaa_idle.py": python_file(1) + f"\nIDLE = {index}\n",
+                "zzz_hot.py": python_file(3, lines_per_func=4) + f"\nHOT = {index}\n",
+            }, days_ago=index)
+        report = self.audit()
+        top = report.metrics["hotspots"]["hotspots"]
+        self.assertTrue(top, "expected a ranked hotspot")
+        self.assertEqual(top[0]["file"], "zzz_hot.py")
+        self.assertEqual(top[0]["commits"], 4)
 
 
 class MergeRatioTest(RepoCase):

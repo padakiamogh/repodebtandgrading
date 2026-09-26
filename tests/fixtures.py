@@ -79,7 +79,14 @@ class TempDirCase(unittest.TestCase):
 class RepoCase(TempDirCase):
     """A scratch directory initialised as a git repository."""
 
-    authors = (("Ada Lovelace", "ada@example.com"), ("Grace Hopper", "grace@example.com"))
+    #: Three authors, because the bus-factor signal needs at least three
+    #: contributors to distinguish "one person wrote this" from "a few people
+    #: share it". Two authors cannot produce an even split.
+    authors = (
+        ("Ada Lovelace", "ada@example.com"),
+        ("Grace Hopper", "grace@example.com"),
+        ("Alan Turing", "alan@example.com"),
+    )
     #: Pin a literal epoch timestamp instead of tracking the wall clock.
     pinned_now: float | None = None
 

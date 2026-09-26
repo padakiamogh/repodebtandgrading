@@ -240,39 +240,54 @@ class GitRepo:
 def _parse_log(out: str, record_sep: str, field_sep: str) -> list[Commit]:
     """Parse ``git log --numstat -z --pretty=format:<fields>``.
 
-    With ``-z`` git groups everything belonging to one commit into a single
-    NUL-terminated field::
+    With ``-z`` git NUL-terminates *every* record, and those record boundaries
+    do not line up with commit boundaries. The commit header is coalesced with
+    the first numstat line, and every further changed file arrives as its own
+    bare numstat field carrying no header at all::
 
-        <sha><US><name><US><email><US><at><US><parents><US><subject>\\n
-        <added>\\t<deleted>\\t<path>\\n
-        ...
+        <header><US>...<US><subject>\\n<added>\\t<deleted>\\t<path>\\0
+        <added>\\t<deleted>\\t<path>\\0
+        <added>\\t<deleted>\\t<path>\\0
 
-    so the header is the first line of the field and every line after it is a
-    numstat record for that same commit.
+    So a field introduces a new commit only if it carries the header
+    separator; otherwise it is another file belonging to the commit already in
+    hand. Reading every field as "header on line 0, numstat after" silently
+    discarded every changed file after the first, so any commit touching more
+    than one file undercounted its churn, its per-file commit count and its
+    author spread -- and since real commits almost always touch several files,
+    hotspot ranking and bus-factor analysis were both built on those numbers.
     """
     commits: list[Commit] = []
+    current: Commit | None = None
     for field in out.split(record_sep):
         if not field.strip():
             continue
         lines = field.split("\n")
-        header_parts = lines[0].split(field_sep)
-        if len(header_parts) < 6:
+        if field_sep in lines[0]:
+            header_parts = lines[0].split(field_sep)
+            if len(header_parts) < 6:
+                current = None
+                continue
+            sha, name, email, at, parents, subject = header_parts[:6]
+            try:
+                timestamp = int(at)
+            except ValueError:
+                current = None
+                continue
+            current = Commit(
+                sha=sha.strip(),
+                author_name=name,
+                author_email=email,
+                timestamp=timestamp,
+                subject=subject,
+                parents=[p for p in parents.split() if p],
+            )
+            commits.append(current)
+            lines = lines[1:]
+        if current is None:
+            # A numstat record with no commit in hand cannot be attributed.
             continue
-        sha, name, email, at, parents, subject = header_parts[:6]
-        try:
-            timestamp = int(at)
-        except ValueError:
-            continue
-        current = Commit(
-            sha=sha.strip(),
-            author_name=name,
-            author_email=email,
-            timestamp=timestamp,
-            subject=subject,
-            parents=[p for p in parents.split() if p],
-        )
-        commits.append(current)
-        for line in lines[1:]:
+        for line in lines:
             parts = line.split("\t")
             if len(parts) != 3:
                 continue

@@ -32,20 +32,53 @@ class CliCase(RepoCase):
         return code, out.getvalue(), err.getvalue()
 
     def make_clean_repo(self) -> None:
-        """A repo that should score well: conventions present, tests covering."""
+        """A reference repo that genuinely earns an A on every dimension.
+
+        This is the yardstick the grade tests measure against, so it has to
+        clear the same bars a real well-run project would: conventions present,
+        tests covering its source, a declared test framework, a bus factor of
+        at least two, and enough history for churn to be rankable. Anything
+        less and a failing grade test is telling us about the fixture rather
+        than about the scorer.
+        """
         self.init_repo()
         files = {
             "README.md": "# Demo\n\n" + ("A project used in tests. " * 20) + "\n",
             "LICENSE": "MIT\n" + ("Permission is hereby granted. " * 20) + "\n",
             "CONTRIBUTING.md": "# Contributing\n\nRun the tests.\n",
+            "CODEOWNERS": "* @demo-team\n",
+            ".editorconfig": "root = true\n\n[*]\nindent_style = space\n",
             ".gitignore": "*.pyc\n__pycache__/\n",
             ".github/workflows/ci.yml": "name: ci\non: [push]\n",
+            "requirements.txt": "flask==2.0.0\n",
+            "requirements-dev.txt": "pytest==7.4.4\n",
             "src/demo.py": python_file(3, lines_per_func=4),
-            "tests/test_demo.py": "def test_a():\n    assert True\n",
+            "tests/test_demo.py": (
+                "import pytest\n"
+                "\n"
+                "from demo import add, mul\n"
+                "\n"
+                "\n"
+                "def test_add():\n"
+                "    assert add(1, 2) == 3\n"
+                "\n"
+                "\n"
+                "def test_mul():\n"
+                "    assert mul(2, 3) == 6\n"
+            ),
         }
-        self.commit("feat: initial project", files=files, days_ago=1)
+        # One commit per author keeps the bus factor at 2, and touching
+        # src/demo.py each time leaves it with enough churn to be ranked.
+        self.commit("feat: initial project", files=files,
+                    author=self.authors[0], days_ago=3)
         self.commit("feat: second change", files={"src/demo.py": python_file(4, lines_per_func=4)},
-                    author=self.authors[1], days_ago=0)
+                    author=self.authors[1], days_ago=2)
+        self.commit("test: cover the demo helpers",
+                    files={
+                        "src/demo.py": python_file(6, lines_per_func=4),
+                        "tests/test_demo.py": files["tests/test_demo.py"] + "\n\ndef test_zero():\n    assert mul(0, 5) == 0\n",
+                    },
+                    author=self.authors[2], days_ago=1)
 
     def make_messy_repo(self) -> None:
         """A repo that should score badly: huge, branchy, untested, no docs."""

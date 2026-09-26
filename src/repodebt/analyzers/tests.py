@@ -7,6 +7,7 @@ reported as unavailable rather than guessed when history is missing.
 
 from __future__ import annotations
 
+import ast
 import re
 from collections import defaultdict
 from typing import Any
@@ -119,9 +120,65 @@ def _test_dirs_for(source_dir: str) -> set[str]:
     return candidates
 
 
-def _strip_python_bodies(text: str) -> str:
-    """Return only lines that belong to a function body, for empty-body checks."""
-    return text
+def _empty_test_lines(text: str) -> list[int]:
+    """Line numbers of test functions whose body asserts nothing.
+
+    A body counts as empty when it holds no executable statement: a docstring,
+    comments and bare ``pass``/``...`` placeholders do not make a test able to
+    fail. Anything else -- a call, an assignment, a loop -- is real work, even
+    if the assertions live in a helper it calls.
+
+    This walks the AST rather than matching the source, because a body is
+    delimited by indentation and a single-line regex cannot see past a leading
+    docstring: ``def test_x():\\n    \\"\\"\\"docs\\"\\"\\"\\n    assert f() == 1``
+    has code, but every regex that looks for it right after the colon reports
+    an empty body and flags a perfectly good test.
+    """
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError, RecursionError):
+        return []
+
+    empty: list[int] = []
+
+    def visit(node: ast.AST) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if _is_test_name(child.name) and _body_is_empty(child):
+                    empty.append(child.lineno)
+            visit(child)
+
+    visit(tree)
+    return empty
+
+
+def _is_test_name(name: str) -> bool:
+    return name.startswith("test_") or name.startswith("_test") or name == "test"
+
+
+def _body_is_empty(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    body = [
+        stmt
+        for stmt in func.body
+        if not (
+            isinstance(stmt, ast.Expr)
+            and isinstance(stmt.value, ast.Constant)
+            and isinstance(stmt.value.value, str)
+        )
+    ]
+    if not body:
+        return True
+    for stmt in body:
+        if isinstance(stmt, ast.Pass):
+            continue
+        if (
+            isinstance(stmt, ast.Expr)
+            and isinstance(stmt.value, ast.Constant)
+            and stmt.value.value is Ellipsis
+        ):
+            continue
+        return False
+    return True
 
 
 class TestsAnalyzer(Analyzer):
@@ -249,17 +306,8 @@ class TestsAnalyzer(Analyzer):
                 ))
 
             if info.language and info.language.name == "Python":
-                for match in re.finditer(
-                    r"^[ \t]*(?:async\s+)?def\s+(test_\w*|_\w*)\s*\([^)]*\)\s*(?:->\s*[^:]+)?:\s*"
-                    r"(\n[ \t]+[^\n]*)?\n(?=[ \t]*(?:\n|@|def |async def |class ))",
-                    text,
-                    re.MULTILINE,
-                ):
-                    body = (match.group(2) or "").strip()
-                    if not body or body.startswith(('"""', "'''", "#")):
-                        line_no = text.count("\n", 0, match.start()) + 1
-                        empty_locations.append(Location(info.rel, line_no))
-                        break
+                for line_no in _empty_test_lines(text):
+                    empty_locations.append(Location(info.rel, line_no))
 
             if lines > max_test_lines:
                 findings.append(make_finding(
@@ -422,8 +470,19 @@ def _nearest_source(test_path: str, source_last: dict[str, int]) -> str | None:
     return None
 
 
+#: Python's own test runner needs no dependency, so a dependency scan can
+#: never see it. A test file that imports it is using it, whatever the
+#: manifests say.
+_PY_BUILTIN_FRAMEWORKS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"^\s*import\s+unittest\b", re.MULTILINE), "unittest"),
+    (re.compile(r"^\s*from\s+unittest\s+import\b", re.MULTILINE), "unittest"),
+    (re.compile(r"^\s*import\s+unittest2\b", re.MULTILINE), "unittest"),
+    (re.compile(r"\bunittest\.TestCase\b"), "unittest"),
+)
+
+
 def _detect_frameworks(ctx: Context) -> list[str]:
-    from .deps import DeclaredDependency, collect_dependencies
+    from .deps import collect_dependencies
 
     try:
         deps = collect_dependencies(ctx)
@@ -434,5 +493,15 @@ def _detect_frameworks(ctx: Context) -> list[str]:
         base = dep.name.split("/")[-1].split(":")[-1].lower()
         for hint, label in _FRAMEWORK_HINTS.items():
             if base == hint or base.startswith(hint):
+                found.add(label)
+    for info in ctx.test_files():
+        if not (info.language and info.language.name == "Python"):
+            continue
+        try:
+            text = info.text()
+        except Exception:  # noqa: BLE001 - unreadable file is not a finding
+            continue
+        for pattern, label in _PY_BUILTIN_FRAMEWORKS:
+            if pattern.search(text):
                 found.add(label)
     return sorted(found)

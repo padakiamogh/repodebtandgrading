@@ -36,7 +36,13 @@ class HotspotsAnalyzer(Analyzer):
     name = "hotspots"
 
     def available(self, ctx: Context) -> bool:
-        return ctx.git.available and ctx.git.history(ctx.config.history_window_days).files != {}
+        if not ctx.git.available:
+            return False
+        history = ctx.git.history(ctx.config.history_window_days)
+        # Fewer commits than MIN_COMMITS in the window means no file can clear
+        # the per-file churn threshold, so there is nothing to rank. Reporting
+        # a clean hotspots score here would claim a measurement was made.
+        return bool(history.commits) and len(history.commits) >= MIN_COMMITS
 
     def unavailability_reason(self, ctx: Context) -> str:
         if not ctx.git.available:
@@ -45,6 +51,9 @@ class HotspotsAnalyzer(Analyzer):
         history = ctx.git.history(window)
         if not history.commits:
             return f"no commits in the last {window} days"
+        if len(history.commits) < MIN_COMMITS:
+            return (f"only {len(history.commits)} commit(s) in the last {window} days, "
+                    f"fewer than the {MIN_COMMITS} needed to rank churn")
         return f"no file changes recorded in the last {window} days"
 
     def analyze(self, ctx: Context) -> Result:
@@ -139,6 +148,22 @@ class HotspotsAnalyzer(Analyzer):
             "churn_total": sum(r["churn"] for r in rows),
             "contributors_in_window": contributors,
         }
+        if not top:
+            # History exists, but it is spread so thinly that no file reached
+            # MIN_COMMITS. There is no ranking to make, so the honest result is
+            # "not measured" -- not a clean bill of health.
+            return Result(
+                findings=findings,
+                metrics=metrics,
+                unavailable={
+                    "hotspot_ranking": (
+                        f"no file was changed in at least {MIN_COMMITS} separate "
+                        f"commits within the last {window} days, so churn could "
+                        f"not be ranked"
+                    ),
+                },
+                scored=False,
+            )
         return Result(findings=findings, metrics=metrics)
 
 

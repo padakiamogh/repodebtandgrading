@@ -55,6 +55,13 @@ class Result:
     findings: list[Finding] = field(default_factory=list)
     metrics: dict[str, Any] = field(default_factory=dict)
     unavailable: dict[str, str] = field(default_factory=dict)
+    #: False when the analyzer ran but could not actually measure its
+    #: dimension. Distinct from ``available()`` returning False, and the
+    #: distinction matters: a signal that was not computable must leave the
+    #: dimension unscored (score None, dropped from the weighted average)
+    #: rather than reporting a perfect score for a measurement that never
+    #: happened. An empty finding list is not evidence of health.
+    scored: bool = True
 
 
 class Analyzer(abc.ABC):

@@ -63,9 +63,17 @@ def run_audit(
                 unavailable[f"{analyzer.dimension.value}_analysis"] = reason
                 continue
             result = analyzer.analyze(ctx)
-        available.add(analyzer.dimension)
         findings.extend(result.findings)
         unavailable.update(result.unavailable)
+        if result.scored:
+            available.add(analyzer.dimension)
+        else:
+            # The analyzer ran but produced no measurement, so the dimension
+            # must not be scored. Scoring it would award full marks for a
+            # measurement that never happened.
+            notes_by_dimension[analyzer.dimension] = (
+                next(iter(result.unavailable.values()), "signal not measurable")
+            )
         for key, value in result.metrics.items():
             metrics.setdefault(analyzer.name, {}).setdefault(key, value)
         metrics[analyzer.name]["_elapsed_ms"] = round(timer.elapsed * 1000, 1)

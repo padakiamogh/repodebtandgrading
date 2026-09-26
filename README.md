@@ -102,6 +102,14 @@ it is dropped from the weighted average. **A signal that could not be
 computed is never reported as a signal that passed.** A repo audited without
 git shows you exactly which conclusions you are not entitled to draw.
 
+This holds in both directions. An analyzer that runs but cannot produce a
+measurement marks itself unscored rather than returning an empty finding
+list, because *no findings* and *nothing to find* are different claims. A
+repository with two commits in the window has no churn to rank, so hotspots
+is reported as unmeasured — not as a clean sheet. Hotspots carries a fifth
+of the overall weight, and scoring an unrankable dimension as perfect would
+inflate the grade on the strength of a measurement that never happened.
+
 ## Scoring
 
 The model is deliberately simple enough to argue with:
@@ -250,6 +258,12 @@ name, and Packagist packages with their `vendor/package` name, because those
 are the identifiers OSV indexes. Trimming either to its last component would
 silently miss every advisory for the package.
 
+Requirements files are classified by filename, so `requirements-dev.txt`,
+`requirements/tests.txt` and similar hold test and tooling pins rather than
+shipped dependencies. Counting them as production overstates what a release
+installs, and sends the advisory lookup after packages the project never
+deploys.
+
 The tool stays fully functional offline. If the network is unavailable,
 `--online` degrades to offline mode and records the reason in
 `unavailable{}` rather than failing the run or inventing results.
@@ -292,6 +306,10 @@ repodebt treats missing inputs as unknown, never as healthy:
 - **No git** → hotspots unscored, history-based hygiene signals listed in
   `unavailable{}`, filesystem hygiene still scored.
 - **No `git` binary** → same, with the reason recorded.
+- **Too little history to rank churn** → hotspots unscored. Churn ranking
+  needs at least `hotspot_min_commits` commits touching a *single* file; a
+  handful of commits spread thinly is not a ranking, and a real repository
+  has more than two commits.
 - **No dependency manifest** → dependency risk unscored rather than perfect.
 - **A file that will not parse** → `complexity.parse_error`, and the rest of
   the file is skipped instead of the run dying.
@@ -303,11 +321,11 @@ repodebt treats missing inputs as unknown, never as healthy:
 $ python -m unittest discover -s tests -t tests
 ```
 
-234 tests, stdlib `unittest` only. The suite builds real git repositories in
+319 tests, stdlib `unittest` only. The suite builds real git repositories in
 temp directories with commit dates pinned relative to the current clock, so
 churn, bus-factor, and staleness assertions stay deterministic — and stay
 inside the history window as time passes. The git-dependent tests take most
-of the runtime (roughly two minutes, dominated by process spawns on Windows).
+of the runtime (roughly four minutes, dominated by process spawns on Windows).
 
 Layout:
 

@@ -1,0 +1,79 @@
+name: Build executables
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: repodebt-linux
+            asset: repodebt-linux
+          - os: macos-latest
+            artifact: repodebt-macos
+            asset: repodebt-macos
+          - os: windows-latest
+            artifact: repodebt-windows.exe
+            asset: repodebt-windows.exe
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PyInstaller
+        run: python -m pip install --upgrade pip pyinstaller
+
+      - name: Build executable
+        run: |
+          pyinstaller \
+            --onefile \
+            --name repodebt \
+            --distpath dist \
+            --workpath build \
+            --specpath . \
+            src/repodebt/__main__.py
+
+      - name: Verify it runs
+        run: |
+          ./dist/${{ matrix.artifact }} --version
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.artifact }}
+          retention-days: 1
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: ls -la artifacts/*
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/repodebt-linux/repodebt-linux
+            artifacts/repodebt-macos/repodebt-macos
+            artifacts/repodebt-windows.exe/repodebt-windows.exe
+          generate_release_notes: true

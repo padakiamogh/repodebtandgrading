@@ -44,6 +44,7 @@ jobs:
             --distpath dist/${{ matrix.artifact }} \
             --workpath build \
             --specpath . \
+            --paths src \
             pyi_entry.py
 
       - name: Verify it runs

@@ -1,0 +1,24 @@
+# repodebt's own configuration. Dogfooding: the thresholds here are the ones
+# we are willing to be measured against.
+#
+# NOTE: bare keys must come *before* any [table] header. In TOML everything
+# after "[weights]" belongs to that table, so a top-level key written down
+# there parses cleanly and then does nothing. repodebt reports it as an
+# unrecognised key ("weights.large_file_lines"), but it is still a mistake
+# rather than a setting.
+
+large_file_lines       = 700
+long_function_lines    = 120
+complex_function_score = 20
+max_nesting_depth      = 5
+duplication_min_lines  = 30
+
+# This project is a Python package with a real test suite. The analyzers are
+# the long pole in this codebase, so complexity keeps the default weight
+# rather than being quietly downgraded.
+[weights]
+complexity = 0.25
+tests      = 0.25
+hotspots   = 0.20
+deps       = 0.15
+hygiene    = 0.15

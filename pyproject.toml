@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "repodebt"
+version = "1.0.0"
+description = "Repository tech debt and health auditor"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = []
+
+[project.scripts]
+repodebt = "repodebt.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# repodebt's own settings live in ./repodebt.toml, not here. A
+# [tool.repodebt] table is supported, but repodebt.toml takes precedence, so
+# keeping both would leave one of them silently dead. Do not add this table.

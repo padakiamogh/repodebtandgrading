@@ -1,0 +1,16 @@
+# Paths repodebt should not measure. One glob per line; '#' starts a comment.
+#
+# Most of the usual suspects are already excluded by default: .git, node_modules,
+# vendor, dist, build, target, .venv, __pycache__, *.egg-info, site-packages,
+# and the other language-specific caches. This file is for what is specific to
+# *this* repository, and it adds to the defaults rather than replacing them.
+
+# Nothing here yet. The project has no generated or vendored source that the
+# default excludes do not already cover, and an empty file is worth more than
+# a list of patterns that would silently do nothing.
+#
+# When generated code lands, add it, for example:
+#
+#   docs/_build/          # rendered site output
+#   benchmarks/fixtures/  # large captured inputs, not our code
+#   *.generated.py        # protoc / openapi-generator output

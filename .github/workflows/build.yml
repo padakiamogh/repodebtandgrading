@@ -44,7 +44,7 @@ jobs:
             --distpath dist/${{ matrix.artifact }} \
             --workpath build \
             --specpath . \
-            src/repodebt/__main__.py
+            pyi_entry.py
 
       - name: Verify it runs
         shell: bash

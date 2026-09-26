@@ -41,7 +41,7 @@ jobs:
           pyinstaller \
             --onefile \
             --name repodebt \
-            --distpath dist \
+            --distpath dist/${{ matrix.artifact }} \
             --workpath build \
             --specpath . \
             src/repodebt/__main__.py
@@ -49,7 +49,7 @@ jobs:
       - name: Verify it runs
         shell: bash
         run: |
-          ./dist/${{ matrix.artifact }} --version
+          ./dist/${{ matrix.artifact }}/repodebt --version
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -75,7 +75,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/repodebt-linux/repodebt-linux
-            artifacts/repodebt-macos/repodebt-macos
-            artifacts/repodebt-windows.exe/repodebt-windows.exe
+            artifacts/repodebt-linux/repodebt
+            artifacts/repodebt-macos/repodebt
+            artifacts/repodebt-windows.exe/repodebt.exe
           generate_release_notes: true
